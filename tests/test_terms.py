@@ -51,8 +51,10 @@ class TermsFormParserTests(unittest.TestCase):
     def test_rejects_a_form_missing_required_identity_data(self):
         terms = load_terms_module()
 
-        with self.assertRaises(ValueError):
-            terms.parse_terms_form('<form action="/terms"><input name="_csrf" value="x"></form>')
+        with self.assertRaisesRegex(ValueError, "missing required fields: hmac, relayState"):
+            terms.parse_terms_form(
+                '<form action="/terms-and-conditions"><input name="_csrf" value="x"></form>'
+            )
 
     def test_ignores_inputs_outside_the_terms_form(self):
         terms = load_terms_module()

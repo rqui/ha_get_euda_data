@@ -45,6 +45,11 @@ def parse_terms_form(html: str) -> tuple[str, dict[str, str]]:
 
     missing = REQUIRED_TERMS_FIELDS.difference(parser.fields)
     if parser.action is None or missing:
-        raise ValueError("Identity terms form is missing required fields")
+        missing_names = ", ".join(sorted(missing))
+        available_names = ", ".join(sorted(parser.fields))
+        raise ValueError(
+            "Identity terms form missing required fields: "
+            f"{missing_names}; available fields: {available_names}"
+        )
 
     return parser.action, parser.fields
