@@ -19,7 +19,6 @@ CONFIG_FLOW = (
     / "config_flow.py"
 )
 
-
 class ConfigFlowWorkerTests(unittest.TestCase):
     def test_background_workers_initialize_result_before_awaiting_connection(self):
         tree = ast.parse(CONFIG_FLOW.read_text(encoding="utf-8"))
@@ -50,7 +49,6 @@ class ConfigFlowWorkerTests(unittest.TestCase):
             "vol.Required(CONF_BRAND, default=brand_values[0])",
             source,
         )
-
 
 if __name__ == "__main__":
     unittest.main()

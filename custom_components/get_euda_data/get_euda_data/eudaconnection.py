@@ -20,6 +20,7 @@ import aiohttp
 from bs4 import BeautifulSoup, ResultSet
 from .utilities import json_loads
 from .terms import parse_terms_form
+from .identity_locale import accept_language, identity_locale, oidc_state
 from .eudavehicle import EUDAVehicle
 from .exceptions import (
     PyCupraConfigException,
@@ -108,6 +109,7 @@ class EUDAConnection:
         self._session_auth_password = password
         self._vehicles: list = []
         self._hass = hass
+        self._set_identity_locale()
 
         self._anonymisationDict: dict = {}
         self.addToAnonymisationDict(
@@ -170,6 +172,16 @@ class EUDAConnection:
         self._session._cookie_jar._cookies.clear()
         self._session_cookies = cookies.SimpleCookie()
 
+    def _set_identity_locale(self) -> None:
+        """Align identity headers and OIDC state with Home Assistant locale."""
+        config = getattr(self._hass, "config", None)
+        self._identity_country, self._identity_language = identity_locale(
+            getattr(config, "country", None), getattr(config, "language", None)
+        )
+        self._session_auth_headers["Accept-Language"] = accept_language(
+            self._identity_country, self._identity_language
+        )
+
     # API login/logout/authorization
     async def doLogin(self, **data) -> bool:
         """Login method, clean login or use token from file and refresh it"""
@@ -178,6 +190,7 @@ class EUDAConnection:
         self._vehicles.clear()
         self._session_headers = EUDA_HEADERS_SESSION.copy()
         self._session_auth_headers = EUDA_HEADERS_AUTH.copy()
+        self._set_identity_locale()
 
         # self._LOGGER.info('Initiating new login with user name and password.')
         return await self._authorize(self._session_auth_brand)
@@ -264,8 +277,10 @@ class EUDAConnection:
             authorization_url = (
                 authorization_url
                 + EUDA_CLIENT_LIST[client]["SCOPE"]
-                + "&state=de__en__"
-                + client.upper()
+                + "&state="
+                + oidc_state(
+                    self._identity_country, self._identity_language, client
+                )
                 + "&redirect_uri="
             )
             authorization_url = (
