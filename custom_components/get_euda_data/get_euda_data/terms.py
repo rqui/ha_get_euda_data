@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 
 
 REQUIRED_TERMS_FIELDS = frozenset(
-    {"_csrf", "relayState", "hmac", "countryOfResidence"}
+    {"_csrf", "relayState", "hmac"}
 )
 
 
@@ -47,6 +47,4 @@ def parse_terms_form(html: str) -> tuple[str, dict[str, str]]:
     if parser.action is None or missing:
         raise ValueError("Identity terms form is missing required fields")
 
-    return parser.action, {
-        field: parser.fields[field] for field in REQUIRED_TERMS_FIELDS
-    }
+    return parser.action, parser.fields
