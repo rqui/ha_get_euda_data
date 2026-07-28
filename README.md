@@ -32,6 +32,11 @@ This integration will only work for your car(s), if you have done the necessary 
 - Now choose your brand and click "Login" and then "Continue" on the follwoing page.
 - You will be redirected to the login page of Seat (yes also for Cupra users) and login there.
 
+### Terms and conditions during integration login
+If the Volkswagen identity portal displays its mandatory terms and conditions form while Get_EUDA_Data logs in, the integration handles that form automatically in the same authenticated session. It uses the country and language configured in Home Assistant; for example, a Spanish CUPRA installation uses the same `es__es__CUPRA` login locale as the Spanish portal.
+
+You should still log in to the EU Data Act portal manually before the initial setup to review any new legal terms and complete any portal-specific account or vehicle steps. If the portal requires an interactive action that is not a standard terms form, the integration will show a login error instead of bypassing it.
+
 ### Choose your vehicle, allow access and set up a customised data request
 - After a successful login, you will be redirected back to the EU Data Act portal.
 - You see a list of your connected vehicles (only one for most of you).
@@ -52,7 +57,7 @@ This integration will only work for your car(s), if you have done the necessary 
 
 ### Installation with HACS
 If you have HACS (Home Assistant Community Store) installed, go to the tab HACS on the Home Assistant UI.  Click on the three vertical points on the top and right of the screen and choose 'Custom repositories'. 
-Enter 'https://github.com/WulfgarW/ha_get_euda_data' as repository and choose the type 'integration' and click on 'Add'. When HACS has loaded the repository information, leave this submenu with cancel. Now you can enter 'euda' in the search field and should find 'Get EUDA Data'. Click on the three vertical points and choose 'Download'.
+Enter 'https://github.com/rqui/ha_get_euda_data' as repository and choose the type 'integration' and click on 'Add'. When HACS has loaded the repository information, leave this submenu with cancel. Now you can enter 'euda' in the search field and should find 'Get EUDA Data'. Click on the three vertical points and choose 'Download'.
 After that, you can go to Settings>Devices&Services, choose 'Add integration' and search for 'Get_EUDA_Data'.
 
 ### Manual installation
