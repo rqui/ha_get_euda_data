@@ -96,10 +96,16 @@ class PyCupraConnectConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     # noinspection PyBroadException
     async def _async_task_login(self):
+        # Keep the worker successful even when authentication raises.  The
+        # progress step will then transition to ``show_progress_done`` and
+        # return the user to the credentials form with the actual error.
+        result = False
         try:
             result = await self._eudaConnection.doLogin()
-        except Exception as e:
-            _LOGGER.error(f"Login failed with error: {e}")
+        except Exception:
+            # Identity-provider exceptions can contain relay URLs and account
+            # identifiers.  Keep those out of the normal Home Assistant log.
+            _LOGGER.error("Login failed")
             self._errors["base"] = "cannot_connect"
 
         if result is False:
@@ -110,10 +116,13 @@ class PyCupraConnectConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def _async_task_get_vehicles(self):
+        # See _async_task_login: an exception is reported through the progress
+        # flow rather than escaping the background task.
+        result = False
         try:
             result = await self._eudaConnection.getVehicles()
-        except Exception as e:
-            _LOGGER.error(f"Fetch vehicles failed with error: {e}")
+        except Exception:
+            _LOGGER.error("Fetching vehicles failed")
             self._errors["base"] = "cannot_connect"
 
         if result is False:
