@@ -15,10 +15,11 @@ import csv
 
 from sys import version_info, argv
 from datetime import timedelta, datetime, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 import aiohttp
 from bs4 import BeautifulSoup, ResultSet
 from .utilities import json_loads
+from .terms import parse_terms_form
 from .eudavehicle import EUDAVehicle
 from .exceptions import (
     PyCupraConfigException,
@@ -181,6 +182,48 @@ class EUDAConnection:
         # self._LOGGER.info('Initiating new login with user name and password.')
         return await self._authorize(self._session_auth_brand)
 
+    async def _accept_terms_and_conditions(
+        self, location: str, auth_issuer: str
+    ) -> str:
+        """Accept the mandatory identity terms in the active login session."""
+        terms_url = urljoin(auth_issuer, location)
+        identity_origin = urlparse(auth_issuer)
+        terms_origin = urlparse(terms_url)
+        if (
+            terms_origin.scheme != identity_origin.scheme
+            or terms_origin.netloc != identity_origin.netloc
+        ):
+            raise PyCupraEULAException("Unexpected identity terms origin")
+
+        headers = self._session_auth_headers.copy()
+        headers["Referer"] = terms_url
+        headers["Origin"] = f"{terms_origin.scheme}://{terms_origin.netloc}"
+        async with self._session.get(
+            url=terms_url, headers=headers, allow_redirects=False
+        ) as response:
+            if response.status != 200:
+                raise PyCupraEULAException("Could not load the identity terms form")
+            action, form_data = parse_terms_form(await response.text())
+
+        acceptance_url = urljoin(terms_url, action)
+        acceptance_origin = urlparse(acceptance_url)
+        if (
+            acceptance_origin.scheme != identity_origin.scheme
+            or acceptance_origin.netloc != identity_origin.netloc
+        ):
+            raise PyCupraEULAException("Unexpected identity terms action")
+
+        async with self._session.post(
+            url=acceptance_url,
+            data=form_data,
+            headers=headers,
+            allow_redirects=False,
+        ) as response:
+            next_location = response.headers.get("Location")
+            if response.status not in range(300, 400) or next_location is None:
+                raise PyCupraEULAException("Could not accept the identity terms form")
+            return urljoin(acceptance_url, next_location)
+
     async def _authorize(self, client: str = BRAND_CUPRA) -> bool:
         """ "Login" function. Authorize a certain client type and get cookies."""
         # Login/Authorization starts here
@@ -296,6 +339,7 @@ class EUDAConnection:
             # Follow all redirects until we reach the callback URL
             try:
                 maxDepth = 10
+                accepted_terms = False
                 while not location.startswith(EUDA_CLIENT_LIST[client]["REDIRECT_URL"]):
                     if location is None:
                         raise PyCupraException("Login failed")
@@ -321,10 +365,18 @@ class EUDAConnection:
                         self._loginError = f"Login failed: {errorTxt}"
                         raise PyCupraLoginFailedException(errorTxt)
                     if "terms-and-conditions" in location:
-                        self._loginError = 'The terms and conditions must be accepted first at your local SEAT/Cupra site, e.g. "https://cupraid.vwgroup.io/"'
-                        raise PyCupraEULAException(
-                            'The terms and conditions must be accepted first at your local SEAT/Cupra site, e.g. "https://cupraid.vwgroup.io/"'
+                        if accepted_terms:
+                            raise PyCupraEULAException(
+                                "Identity terms were requested again after acceptance"
+                            )
+                        self._LOGGER.info(
+                            "Accepting required identity terms for the active login session"
                         )
+                        location = await self._accept_terms_and_conditions(
+                            location, auth_issuer
+                        )
+                        accepted_terms = True
+                        continue
                     if "consent/marketing" in location:
                         self._loginError = 'The question to consent to marketing must be answered first at your local SEAT/Cupra site, e.g. "https://cupraid.vwgroup.io/"'
                         raise PyCupraMarketingConsentException(
