@@ -307,7 +307,7 @@ class PyCupraConnectConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_BRAND, default=brand_values[0]): vol.In(
+                    vol.Required(CONF_BRAND, default=self.entry[CONF_BRAND]): vol.In(
                         brand_values
                     ),
                     vol.Required(

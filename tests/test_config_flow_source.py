@@ -39,6 +39,18 @@ class ConfigFlowWorkerTests(unittest.TestCase):
             )
             self.assertIsInstance(worker.body[1], ast.Try)
 
+    def test_reauth_keeps_the_brand_from_the_existing_entry(self):
+        source = CONFIG_FLOW.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "vol.Required(CONF_BRAND, default=self.entry[CONF_BRAND])",
+            source,
+        )
+        self.assertNotIn(
+            "vol.Required(CONF_BRAND, default=brand_values[0])",
+            source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
