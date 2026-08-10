@@ -1464,25 +1464,38 @@ class EUDAConnection:
                 self.currentData[vin] = {}
             if self.rawData.get(vin, {}).get(timeStamp, None) is None:
                 self.rawData[vin][timeStamp] = dataFromFile
-                if (
-                    self.currentData.get(vin, {}).get(
-                        "timeStamp",
-                        GetTimeStampFromFileName("Dummy_20000101000000.json"),
-                    )
-                    <= timeStamp
-                    and len(dataFromFile.get("Data", [])) > 0
-                ):
-                    # Time stamp of current file is equal or later than time stamp of self.currentData
-                    self.currentData[vin]["timeStamp"] = timeStamp
-                    self.currentData[vin]["Data"] = dataFromFile.get("Data", [])
-                else:
-                    if len(dataFromFile.get("Data", [])) < 1:
-                        self._LOGGER.info(f"Data list of file {fileName} is empty.")
-                    else:
-                        self._LOGGER.info(
-                            f"Timestamp of file {fileName} is {timeStamp} which is not newer than"
-                            f"{self.currentData.get(vin, {}).get('timeStamp', GetTimeStampFromFileName('Dummy_20000101000000.json'))}."
+                if len(dataFromFile.get("Data", [])) > 0:
+                    # The EUDA portal delivers partial files: each file only contains a
+                    # subset of the data fields. Merge the fields of this file into
+                    # currentData by key instead of replacing currentData wholesale, so
+                    # that fields absent from the newest file keep their last known
+                    # value instead of becoming "unknown" in Home Assistant.
+                    existingData = self.currentData.get(vin, {}).get("Data", [])
+                    mergedByKey = {
+                        element.get("key", ""): element for element in existingData
+                    }
+                    for element in dataFromFile.get("Data", []):
+                        key = element.get("key", "")
+                        existingElement = mergedByKey.get(key)
+                        if existingElement is not None:
+                            existingTimestamp = existingElement.get("timestampUtc", "")
+                            newTimestamp = element.get("timestampUtc", "")
+                            if existingTimestamp and newTimestamp and existingTimestamp > newTimestamp:
+                                # Keep the newer value for this specific field.
+                                continue
+                        mergedByKey[key] = element
+                    self.currentData[vin]["Data"] = list(mergedByKey.values())
+                    if (
+                        self.currentData.get(vin, {}).get(
+                            "timeStamp",
+                            GetTimeStampFromFileName("Dummy_20000101000000.json"),
                         )
+                        <= timeStamp
+                    ):
+                        # Time stamp of current file is equal or later than time stamp of self.currentData
+                        self.currentData[vin]["timeStamp"] = timeStamp
+                else:
+                    self._LOGGER.info(f"Data list of file {fileName} is empty.")
             else:
                 self._LOGGER.error(
                     "Wanted to copy data to raw data dict, but timestamp is already present."
