@@ -23,7 +23,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv, device_registry
+from homeassistant.helpers import config_validation as cv, device_registry, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
@@ -590,6 +590,9 @@ class PyCupraCoordinator(DataUpdateCoordinator):
                                 title="EUDA connection failed",
                                 id="PyCupra_euda_error",
                             )
+                            async_show_pycupra_repair_issue(
+                                self.hass, self.entry, self.eudaConnection._loginError
+                            )
                     except Exception:
                         _LOGGER.error(
                             f"An error occurred in update of EU data act data. Error: {self.eudaConnection._loginError}"
@@ -600,6 +603,14 @@ class PyCupraCoordinator(DataUpdateCoordinator):
                             title="EUDA connection failed",
                             id="PyCupra_euda_error",
                         )
+                        async_show_pycupra_repair_issue(
+                            self.hass, self.entry, self.eudaConnection._loginError
+                        )
+                    else:
+                        if self.eudaConnection._loginError is None:
+                            ir.async_delete_issue(
+                                self.hass, DOMAIN, f"euda_connection_failed_{self.entry.entry_id}"
+                            )
                 else:
                     rc2 = False
             if not rc2:
@@ -612,6 +623,25 @@ class PyCupraCoordinator(DataUpdateCoordinator):
                 f"An error occured PyCupraCoordinator.update(). Error: {error}. Continuing with old vehicle data"
             )
             return eudaVehicles
+
+
+def async_show_pycupra_repair_issue(hass: HomeAssistant, entry: ConfigEntry, error_message):
+    """Create a repair issue for a EUDA connection failure.
+
+    Unlike the transient persistent_notification (which does not reliably
+    survive a Home Assistant restart), this shows up under
+    Settings -> System -> Repairs and stays there until the connection
+    succeeds again or the issue is dismissed, so an outage isn't silently
+    missed."""
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        f"euda_connection_failed_{entry.entry_id}",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="euda_connection_failed",
+        translation_placeholders={"error": str(error_message)},
+    )
 
 
 def async_show_pycupra_notification(hass: HomeAssistant, message, title=None, id=None):

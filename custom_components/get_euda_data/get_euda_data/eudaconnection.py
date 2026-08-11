@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 import aiohttp
 from bs4 import BeautifulSoup, ResultSet
 from .utilities import json_loads
-from .terms import parse_terms_form
+from .terms import parse_terms_form, parse_marketing_consent_form
 from .identity_locale import accept_language, identity_locale, oidc_state
 from .eudavehicle import EUDAVehicle
 from .exceptions import (
@@ -237,6 +237,66 @@ class EUDAConnection:
                 raise PyCupraEULAException("Could not accept the identity terms form")
             return urljoin(acceptance_url, next_location)
 
+    async def _decline_marketing_consent(
+        self, location: str, auth_issuer: str
+    ) -> str:
+        """Decline the optional marketing-consent question in the active login
+        session, if - and only if - the form unambiguously offers a decline
+        option. Raises PyCupraMarketingConsentException (same as before, so
+        callers don't need to change) if the form can't be safely handled,
+        so that we never risk silently opting the account into marketing."""
+        consent_url = urljoin(auth_issuer, location)
+        identity_origin = urlparse(auth_issuer)
+        consent_origin = urlparse(consent_url)
+        if (
+            consent_origin.scheme != identity_origin.scheme
+            or consent_origin.netloc != identity_origin.netloc
+        ):
+            raise PyCupraMarketingConsentException("Unexpected identity consent origin")
+
+        headers = self._session_auth_headers.copy()
+        headers["Referer"] = consent_url
+        headers["Origin"] = f"{consent_origin.scheme}://{consent_origin.netloc}"
+        try:
+            async with self._session.get(
+                url=consent_url, headers=headers, allow_redirects=False
+            ) as response:
+                if response.status != 200:
+                    raise PyCupraMarketingConsentException(
+                        "Could not load the marketing consent form"
+                    )
+                action, form_data = parse_marketing_consent_form(await response.text())
+        except ValueError as e:
+            self._LOGGER.warning(
+                f"Could not safely auto-decline the marketing consent question, "
+                f"falling back to manual handling. Reason: {e}"
+            )
+            raise PyCupraMarketingConsentException(
+                'The question to consent to marketing must be answered first at your local SEAT/Cupra site, e.g. "https://cupraid.vwgroup.io/"'
+            )
+
+        decline_url = urljoin(consent_url, action)
+        decline_origin = urlparse(decline_url)
+        if (
+            decline_origin.scheme != identity_origin.scheme
+            or decline_origin.netloc != identity_origin.netloc
+        ):
+            raise PyCupraMarketingConsentException("Unexpected identity consent action")
+
+        async with self._session.post(
+            url=decline_url,
+            data=form_data,
+            headers=headers,
+            allow_redirects=False,
+        ) as response:
+            next_location = response.headers.get("Location")
+            if response.status not in range(300, 400) or next_location is None:
+                raise PyCupraMarketingConsentException(
+                    "Could not decline the marketing consent form"
+                )
+            self._LOGGER.info("Automatically declined the marketing consent question")
+            return urljoin(decline_url, next_location)
+
     async def _authorize(self, client: str = BRAND_CUPRA) -> bool:
         """ "Login" function. Authorize a certain client type and get cookies."""
         # Login/Authorization starts here
@@ -355,6 +415,7 @@ class EUDAConnection:
             try:
                 maxDepth = 10
                 accepted_terms = False
+                declined_marketing = False
                 while not location.startswith(EUDA_CLIENT_LIST[client]["REDIRECT_URL"]):
                     if location is None:
                         raise PyCupraException("Login failed")
@@ -393,10 +454,23 @@ class EUDAConnection:
                         accepted_terms = True
                         continue
                     if "consent/marketing" in location:
-                        self._loginError = 'The question to consent to marketing must be answered first at your local SEAT/Cupra site, e.g. "https://cupraid.vwgroup.io/"'
-                        raise PyCupraMarketingConsentException(
-                            'The question to consent to marketing must be answered first at your local SEAT/Cupra site, e.g. "https://cupraid.vwgroup.io/"'
-                        )
+                        if declined_marketing:
+                            self._loginError = "Marketing consent was requested again after declining it"
+                            raise PyCupraMarketingConsentException(
+                                "Marketing consent was requested again after declining it"
+                            )
+                        try:
+                            self._LOGGER.info(
+                                "Attempting to automatically decline the marketing consent question"
+                            )
+                            location = await self._decline_marketing_consent(
+                                location, auth_issuer
+                            )
+                            declined_marketing = True
+                            continue
+                        except PyCupraMarketingConsentException as e:
+                            self._loginError = 'The question to consent to marketing must be answered first at your local SEAT/Cupra site, e.g. "https://cupraid.vwgroup.io/"'
+                            raise
                     if (
                         "user_id" in location
                     ):  # Get the user_id which is needed for some later requests

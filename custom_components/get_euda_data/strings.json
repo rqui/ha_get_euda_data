@@ -51,6 +51,12 @@
       "task_update": "Fetching vehicles"
     }
   },
+  "issues": {
+    "euda_connection_failed": {
+      "title": "EU Data Act connection failed",
+      "description": "An error occurred while updating vehicle data: {error}\n\nIf this is a marketing-consent question that could not be answered automatically, log in to your local SEAT/Cupra site (e.g. https://cupraid.vwgroup.io/) and answer it there, then reload the Get EUDA Data integration."
+    }
+  },
   "options": {
     "step": {
       "user": {
