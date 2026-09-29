@@ -178,9 +178,20 @@ class EUDAConnection:
         self._identity_country, self._identity_language = identity_locale(
             getattr(config, "country", None), getattr(config, "language", None)
         )
-        self._session_auth_headers["Accept-Language"] = accept_language(
+        language_header = accept_language(
             self._identity_country, self._identity_language
         )
+        self._session_auth_headers["Accept-Language"] = language_header
+        self._session_headers = {
+            "Accept": "*/*",
+            "Content-Type": "application/json",
+            "Accept-Language": language_header,
+            "Referer": (
+                f"{EUDA_BASE_URL}/{self._identity_country.lower()}/"
+                f"{self._identity_language.lower()}/user.html"
+            ),
+            "User-Agent": EUDA_HEADERS_SESSION["User-Agent"],
+        }
 
     # API login/logout/authorization
     async def doLogin(self, **data) -> bool:
@@ -787,7 +798,7 @@ class EUDAConnection:
         self._clear_cookies()
 
     # HTTP methods to API
-    async def get(self, url: str, vin="") -> Any:
+    async def get(self, url: str, vin="", retry_auth=True) -> Any:
         """Perform a HTTP GET."""
         try:
             response = await self._request(METH_GET, url)
@@ -804,14 +815,14 @@ class EUDAConnection:
                 self._LOGGER.warning(
                     'Received "Unauthorized" while fetching data. This can occur if login expired.'
                 )
-                if True:  # not self._error401:
+                if retry_auth:
                     self._error401 = True
                     try:
                         rc = await self._authorize(self._session_auth_brand)
                         if rc:
                             self._LOGGER.info("Successful relogin after error 401.")
                             self._error401 = False
-                            return data  # Leave get() without debug output of http request information
+                            return await self.get(url, vin=vin, retry_auth=False)
                         else:
                             self._LOGGER.info(
                                 "Refresh of tokens after error 401 not successful."
@@ -827,14 +838,14 @@ class EUDAConnection:
                 self._LOGGER.warning(
                     'Received "Forbidden" while fetching data. This can occur if login expired.'
                 )
-                if True:  # self._error403 != True:
+                if retry_auth:
                     self._error403 = True
                     try:
                         rc = await self._authorize(self._session_auth_brand)
                         if rc:
                             self._LOGGER.info("Successful relogin after error 403.")
                             self._error403 = False
-                            return data  # Leave get() without debug output of http request information
+                            return await self.get(url, vin=vin, retry_auth=False)
                         else:
                             self._LOGGER.info(
                                 "Refresh of tokens after error 403 not successful."
@@ -1081,16 +1092,20 @@ class EUDAConnection:
             response = await self.get(
                 EUDA_API_VEHICLES.format(baseurl=EUDA_BASE_URL, viewPos="FRONT_LEFT")
             )
-            if len(response) > 0:
-                data["vehicles"] = response
-            elif response == []:
-                data["vehicles"] = []
-            elif response.get("status_code", {}):
-                self._LOGGER.warning(
-                    f"Could not fetch vehicles, HTTP status code: {response.get('status_code')}"
+            if isinstance(response, dict):
+                status = response.get("status_code")
+                if status in (401, 403):
+                    raise PyCupraAuthenticationException(
+                        f"Vehicle request denied with HTTP {status} after relogin"
+                    )
+                raise PyCupraInvalidRequestException(
+                    f"Unexpected vehicle response, HTTP status: {status}"
                 )
-            else:
-                self._LOGGER.info("Unhandled error while trying to fetch vehicles")
+            if not isinstance(response, list):
+                raise PyCupraInvalidRequestException("Unexpected vehicle response")
+            data["vehicles"] = response
+        except (PyCupraAuthenticationException, PyCupraInvalidRequestException):
+            raise
         except Exception as error:
             self._LOGGER.warning(f"Could not fetch vehicles, error: {error}")
             return data
