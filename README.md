@@ -37,6 +37,22 @@ If the Volkswagen identity portal displays its mandatory terms and conditions fo
 
 You should still log in to the EU Data Act portal manually before the initial setup to review any new legal terms and complete any portal-specific account or vehicle steps. If the portal requires an interactive action that is not a standard terms form, the integration will show a login error instead of bypassing it.
 
+### Client-rendered identity terms (October 2026)
+
+The identity provider can render the terms screen from `window._IDK` instead of
+shipping a HTML form. This fork supports both layouts without executing the
+provider's JavaScript. The previous symptom was `Identity terms form missing
+required fields: _csrf, hmac, relayState`, even though the response was HTTP 200.
+
+The reader reconstructs the official form fields and preserves same-origin
+checks; it never posts to internal `legalDocuments.saveLink` URLs. Credentials,
+cookies and session fields must not be included in debug artifacts or issues.
+Review and authorize new legal terms before completing an authentication that
+accepts them. Parser support does not imply consent to future terms versions.
+
+See the [validation record](docs/engineering/validacion.md) and
+[root-cause and repair notes](docs/engineering/topics/identity-auth/errores-soluciones.md).
+
 ### Choose your vehicle, allow access and set up a customised data request
 - After a successful login, you will be redirected back to the EU Data Act portal.
 - You see a list of your connected vehicles (only one for most of you).

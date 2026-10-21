@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from html.parser import HTMLParser
+import ast
+import json
+import re
 
 
 REQUIRED_TERMS_FIELDS = frozenset(
@@ -18,9 +21,13 @@ class _TermsFormParser(HTMLParser):
         self.action: str | None = None
         self.fields: dict[str, str] = {}
         self._in_terms_form = False
+        self.scripts: list[str] = []
+        self._script: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
+        if tag == "script" and not attributes.get("src"):
+            self._script = []
         if tag == "form" and self.action is None:
             action = attributes.get("action")
             if action is not None and "terms-and-conditions" in action:
@@ -33,8 +40,82 @@ class _TermsFormParser(HTMLParser):
                 self.fields[name] = value
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._script is not None:
+            self.scripts.append("".join(self._script))
+            self._script = None
         if tag == "form" and self._in_terms_form:
             self._in_terms_form = False
+
+    def handle_data(self, data: str) -> None:
+        if self._script is not None:
+            self._script.append(data)
+
+
+def _script_string(script: str, key: str) -> str:
+    """Read a string literal, never execute the identity provider's JavaScript."""
+    match = re.search(
+        rf"\b{re.escape(key)}\s*:\s*(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')",
+        script,
+    )
+    if match is None:
+        raise ValueError(f"Identity template missing {key}")
+    # literal_eval accepts both quoting styles used by the provider. It cannot
+    # evaluate calls/identifiers; only the matched quoted literal reaches it.
+    value = ast.literal_eval(match[1])
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Identity template has empty {key}")
+    return value
+
+
+def _rendered_terms_form(scripts: list[str]) -> tuple[str, dict[str, str]]:
+    """Reconstruct the POST emitted by VW's client-rendered terms page.
+
+    Since October 2026 the HTML can contain no form at all. The public
+    signIn.bundle.js renders it from _IDK.templateModel. Decode its JSON only;
+    never follow legalDocuments.saveLink (an internal service URL), execute JS,
+    or retain the session's CSRF/hmac/relayState in logs or disk fixtures.
+    """
+    candidates = [s for s in scripts if re.search(r"\bwindow\._IDK\s*=", s)]
+    if len(candidates) != 1:
+        raise ValueError("Identity terms template not found or ambiguous")
+    script = candidates[0]
+    match = re.search(r"\btemplateModel\s*:\s*", script)
+    if match is None:
+        raise ValueError("Identity terms template model missing")
+    model, _ = json.JSONDecoder().raw_decode(script[match.end():].lstrip())
+    if not isinstance(model, dict) or model.get("template") != "termsAndConditions":
+        raise ValueError("Unexpected identity template")
+    client = model.get("clientLegalEntityModel", {}).get("clientId", "")
+    if not isinstance(client, str) or not re.fullmatch(r"[A-Za-z0-9_.@-]+", client):
+        raise ValueError("Invalid identity terms client")
+    if _script_string(script, "csrf_parameterName") != "_csrf":
+        raise ValueError("Unexpected identity CSRF parameter")
+    data = {"_csrf": _script_string(script, "csrf_token")}
+    for key in ("hmac", "relayState", "countryOfResidence"):
+        value = model.get(key)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"Identity terms template missing {key}")
+        data[key] = value
+    documents = model.get("legalDocuments")
+    if not isinstance(documents, list) or not documents or len(documents) > 20:
+        raise ValueError("Identity legal documents missing or invalid")
+    # These are exactly the hidden inputs rendered by the official bundle.
+    # This helper constructs data only; the connection retains origin checks
+    # and owns the explicit acceptance POST, as for the legacy HTML form.
+    for index, document in enumerate(documents):
+        if not isinstance(document, dict):
+            raise ValueError("Invalid identity legal document")
+        for key in ("name", "language", "version", "countryCode"):
+            value = document.get(key)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"Identity legal document missing {key}")
+            data[f"legalDocuments[{index}].{key}"] = value
+        for key in ("updated", "skippable", "declinable"):
+            value = document.get(key)
+            if not isinstance(value, bool):
+                raise ValueError(f"Identity legal document missing {key}")
+            data[f"legalDocuments[{index}].{key}"] = "yes" if value else "no"
+    return f"/signin-service/v1/{client}/terms-and-conditions", data
 
 
 def parse_terms_form(html: str) -> tuple[str, dict[str, str]]:
@@ -43,6 +124,10 @@ def parse_terms_form(html: str) -> tuple[str, dict[str, str]]:
     parser.feed(html)
     parser.close()
 
+    # Keep legacy forms authoritative: never fill a broken HTML form with
+    # session values from an unrelated script. Fall back only if no form exists.
+    if parser.action is None:
+        return _rendered_terms_form(parser.scripts)
     missing = REQUIRED_TERMS_FIELDS.difference(parser.fields)
     if parser.action is None or missing:
         missing_names = ", ".join(sorted(missing))
