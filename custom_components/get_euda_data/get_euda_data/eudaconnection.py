@@ -366,7 +366,7 @@ class EUDAConnection:
                 allow_redirects=False,
             )
             if req.headers.get("Location", False):
-                ref = req.headers.get("Location", "")
+                ref = urljoin(str(req.url), req.headers.get("Location", ""))
                 if "error" in ref:
                     error = parse_qs(urlparse(ref).query).get("error", "")[0]
                     if "error_description" in ref:
@@ -386,7 +386,7 @@ class EUDAConnection:
                         allow_redirects=False,
                     )
             if req.headers.get("Location", False):
-                ref = req.headers.get("Location", "")
+                ref = urljoin(str(req.url), req.headers.get("Location", ""))
                 if "error" in ref:
                     error = parse_qs(urlparse(ref).query).get("error", "")[0]
                     if "error_description" in ref:
@@ -418,16 +418,20 @@ class EUDAConnection:
                 location = await self._signin_service(
                     req, auth_issuer, auth_oidc, client
                 )
+            elif urlparse(str(req.url)).path == "/u/login":
+                location = await self._signin_universal(req, auth_issuer)
             else:
                 # We are already logged on, shorter authorization flow
                 location = req.headers.get("Location", None)
 
+            if location:
+                location = urljoin(str(req.url), location)
             # Follow all redirects until we reach the callback URL
             try:
                 maxDepth = 10
                 accepted_terms = False
                 declined_marketing = False
-                while not location.startswith(EUDA_CLIENT_LIST[client]["REDIRECT_URL"]):
+                while not location or not location.startswith(EUDA_CLIENT_LIST[client]["REDIRECT_URL"]):
                     if location is None:
                         raise PyCupraException("Login failed")
                     if "error" in location:
@@ -507,6 +511,8 @@ class EUDAConnection:
                             "User appears unauthorized"
                         )
                     location = response.headers.get("Location", None)
+                    if location:
+                        location = urljoin(str(response.url), location)
                     # Set a max limit on requests to prevent forever loop
                     maxDepth -= 1
                     if maxDepth == 0:
@@ -541,7 +547,7 @@ class EUDAConnection:
                 url=location, headers=self._session_auth_headers, allow_redirects=False
             )
             if req.headers.get("Location", False):
-                ref = req.headers.get("Location", "")
+                ref = urljoin(str(req.url), req.headers.get("Location", ""))
                 if "error" in ref:
                     error = parse_qs(urlparse(ref).query).get("error", "")[0]
                     if "error_description" in ref:
@@ -568,7 +574,7 @@ class EUDAConnection:
             self._session_cookies.update(req.cookies)
 
             if req.headers.get("Location", False):
-                ref = req.headers.get("Location", "")
+                ref = urljoin(str(req.url), req.headers.get("Location", ""))
                 if "error" in ref:
                     error = parse_qs(urlparse(ref).query).get("error", "")[0]
                     if "error_description" in ref:
@@ -589,7 +595,7 @@ class EUDAConnection:
                     )
 
             if req.headers.get("Location", False):
-                ref = req.headers.get("Location", "")
+                ref = urljoin(str(req.url), req.headers.get("Location", ""))
                 if "error" in ref:
                     error = parse_qs(urlparse(ref).query).get("error", "")[0]
                     if "error_description" in ref:
@@ -653,6 +659,35 @@ class EUDAConnection:
             return False
         loginInProgress = False
         return True
+
+    async def _signin_universal(self, response, auth_issuer: str) -> str:
+        """Submit the identity provider's current username/password form."""
+        page_url = str(response.url)
+        issuer = urlparse(auth_issuer)
+        if (urlparse(page_url).scheme, urlparse(page_url).netloc) != (issuer.scheme, issuer.netloc):
+            raise PyCupraLoginFailedException("Unexpected login page origin")
+        soup = BeautifulSoup(await response.text(), "html.parser")
+        form = next((f for f in soup.find_all("form")
+                     if f.find("input", attrs={"name": "username"})
+                     and f.find("input", attrs={"name": "password"})), None)
+        if form is None or (form.get("method") or "get").lower() != "post":
+            raise PyCupraLoginFailedException("Identity login form not found")
+        action = urljoin(page_url, form.get("action") or page_url)
+        target = urlparse(action)
+        if (target.scheme, target.netloc) != (issuer.scheme, issuer.netloc):
+            raise PyCupraLoginFailedException("Unexpected login form origin")
+        data = {i.get("name"): i.get("value", "") for i in form.find_all("input", type="hidden") if i.get("name")}
+        data.update(username=self._session_auth_username, password=self._session_auth_password)
+        button = form.find("button", attrs={"type": "submit", "name": "action"})
+        if button:
+            data["action"] = button.get("value", "")
+        headers = self._session_auth_headers.copy()
+        headers.update(Referer=page_url, Origin=f"{issuer.scheme}://{issuer.netloc}")
+        result = await self._session.post(url=action, headers=headers, data=data, allow_redirects=False)
+        location = result.headers.get("Location")
+        if result.status not in range(300, 400) or not location:
+            raise PyCupraLoginFailedException("Identity login was rejected or requires additional interaction")
+        return urljoin(str(result.url), location)
 
     async def _signin_service(
         self,

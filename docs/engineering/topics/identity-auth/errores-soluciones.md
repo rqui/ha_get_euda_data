@@ -54,3 +54,16 @@ temporal al limpiarlo; Windows lo bloqueó y tempfile produjo errores repetidos.
 Se restituyó el directorio de trabajo en `finally` antes de la limpieza. Las
 siguientes ejecuciones concluyeron correctamente. Era un fallo del diagnóstico,
 no del componente instalado. No se almacenaron secretos en el directorio temporal.
+
+## AUTH-20261029-01 — formulario universal de identidad
+
+Estado: **verificado** en Home Assistant 2026.10.4 durante el arranque.
+El proveedor devolvió una redirección relativa a `/u/login` y un formulario
+con usuario y contraseña; el cliente anterior esperaba el flujo `signin-service`.
+Se resuelven las redirecciones y se envía el formulario solo al origen de
+identidad. Tras instalar el archivo y reiniciar, la integración cargó y sus
+18 entidades estuvieron disponibles. Se conserva copia previa en Home Assistant.
+Pendiente: verificar el formulario interactivo de reautenticación y la
+renovación tras una caducidad natural. No se almacenaron credenciales ni URLs
+de sesión. Un primer intento de instalación falló antes de sustituir el archivo
+por incompatibilidad de `chmod --reference` con BusyBox; se usó modo 644.

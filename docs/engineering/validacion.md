@@ -22,3 +22,10 @@ Base: `5623de4`. Adaptación en `terms.py`; pruebas en `tests/test_terms.py`.
 No se guardaron cuerpos autenticados ni secretos en las pruebas o el repositorio.
 Las fixtures son sintéticas. Las condiciones son legales: la comprobación real
 solo se realizó después de obtener autorización explícita del titular.
+
+## 2026-10-29 — formulario de identidad universal
+
+- Windows: `python -m unittest discover -s tests`: 21 pruebas aprobadas.
+- Home Assistant 2026.10.4: inicio de sesión real al arrancar, entrada cargada
+  y 18 entidades disponibles. Archivo instalado SHA-256 `fdc695d073fb8799e73248bf5f882d38e4e26ca873f4d0e0b57ea929bf669753`.
+- Sin comprobar: formulario interactivo de reautenticación y caducidad natural.
